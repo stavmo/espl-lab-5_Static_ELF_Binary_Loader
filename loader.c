@@ -19,6 +19,16 @@
 // } Elf32_Phdr;
 
 int i = 0;
+int mflags = MAP_PRIVATE | MAP_FIXED;
+
+int elf_flag_to_mmap_prot(int p_flags) {
+    int prot = 0;
+    if (p_flags & PF_R) prot |= PROT_READ;
+    if (p_flags & PF_W) prot |= PROT_WRITE;
+    if (p_flags & PF_X) prot |= PROT_EXEC;
+    return prot;
+}
+
 
 char *phdr_type_to_str(Elf32_Word t) {
     switch (t) {
@@ -53,8 +63,11 @@ void test_func(Elf32_Phdr *phdr, int index) {
 }
 
 void readelf_l(Elf32_Phdr *phdr, int index) {
+    int prot = elf_flag_to_mmap_prot(phdr->p_flags);
+    int map_flags = (phdr->p_type == PT_LOAD) ? mflags : 0;
+
     printf("%s 0x%06x 0x%08x 0x%08x "
-           " 0x%05x 0x%05x %s 0x%x\n",
+           " 0x%05x 0x%05x %s 0x%x prot=0x%x mflags=0x%x\n",
            phdr_type_to_str(phdr->p_type),
            phdr->p_offset,
            phdr->p_vaddr,
@@ -62,7 +75,9 @@ void readelf_l(Elf32_Phdr *phdr, int index) {
            phdr->p_filesz,
            phdr->p_memsz,
            flags_to_str(phdr->p_flags),
-           phdr->p_align);
+           phdr->p_align,
+           prot,
+           map_flags);
 }
 
 int foreach_phdr(void *map_start, void (*func)(Elf32_Phdr *, int), int arg) {
