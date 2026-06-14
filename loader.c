@@ -18,6 +18,9 @@
 // Elf32_Word p_align; /* memory/file alignment */
 // } Elf32_Phdr;
 
+
+extern int startup(int argc, char **argv, void (*start)());
+
 int i = 0;
 int mflags = MAP_PRIVATE | MAP_FIXED;
 
@@ -28,7 +31,6 @@ int elf_flag_to_mmap_prot(int p_flags) {
     if (p_flags & PF_X) prot |= PROT_EXEC;
     return prot;
 }
-
 
 char *phdr_type_to_str(Elf32_Word t) {
     switch (t) {
@@ -44,18 +46,16 @@ char *phdr_type_to_str(Elf32_Word t) {
 }
 
 char *flags_to_str(Elf32_Word f) {
-     static char str[4];
+    static char str[4];
     int idx = 0;
 
     if (f & PF_R) str[idx++] = 'R';
     if (f & PF_W) str[idx++] = 'W';
-    if (f & PF_X) str[idx++] = 'E';   /* or 'X' if you prefer */
+    if (f & PF_X) str[idx++] = 'E';
 
     str[idx] = '\0';
     return str;
 }
-
-
 
 void test_func(Elf32_Phdr *phdr, int index) {
     printf("Program header number %d at address %p\n", i, (void *)phdr);
@@ -92,13 +92,58 @@ int foreach_phdr(void *map_start, void (*func)(Elf32_Phdr *, int), int arg) {
     return ehdr->e_phnum;
 }
 
+//task 2b
+void load_phdr(Elf32_Phdr *phdr, int fd) {
+    if (phdr->p_type != PT_LOAD) {
+        return; 
+    }
+
+    // Print the segment information
+    readelf_l(phdr, 0);
+
+    // Calculate system page-aligned memory boundaries
+    unsigned int page_size = 0x1000;
+    unsigned int aligned_vaddr = phdr->p_vaddr & ~(page_size - 1);
+    unsigned int offset_diff = phdr->p_vaddr - aligned_vaddr;
+    unsigned int aligned_offset = phdr->p_offset - offset_diff;
+    unsigned int aligned_memsz = phdr->p_memsz + offset_diff;
+
+    // Call mmap to allocate and map the segment into memory
+    void *map_address = mmap(
+        (void *)aligned_vaddr, 
+        aligned_memsz, 
+        elf_flag_to_mmap_prot(phdr->p_flags), 
+        mflags, 
+        fd, 
+        aligned_offset
+    );
+
+    if (map_address == MAP_FAILED) {
+        perror("mmap failed within load_phdr");
+        exit(1);
+    }
+
+    // Allocate and zero out the uninitialized global data (.bss)
+    if (phdr->p_memsz > phdr->p_filesz) {
+        unsigned int bss_start = phdr->p_vaddr + phdr->p_filesz;
+        unsigned int bss_size = phdr->p_memsz - phdr->p_filesz;
+        
+        char *bss = (char *)bss_start;
+        for (unsigned int k = 0; k < bss_size; k++) {
+            bss[k] = 0;
+        }
+    }
+}
+
+
 int main(int argc, char** argv) {
     int fd;
     struct stat st;
     void *map_start;
 
-    if (argc != 2) {
-        perror("argv");
+    // Change constraint check to accept subsequent args passed to your loaded binary
+    if (argc < 2) { 
+        fprintf(stderr, "Usage: %s <elf_executable> [args...]\n", argv[0]);
         return 1;
     }
 
@@ -121,8 +166,41 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    foreach_phdr(map_start, readelf_l, i);
+    Elf32_Ehdr *ehdr = (Elf32_Ehdr *)map_start;
+    if (ehdr->e_ident[EI_MAG0] != ELFMAG0 || 
+        ehdr->e_ident[EI_MAG1] != ELFMAG1 || 
+        ehdr->e_ident[EI_MAG2] != ELFMAG2 || 
+        ehdr->e_ident[EI_MAG3] != ELFMAG3) {
+        fprintf(stderr, "Error: Not a valid ELF binary.\n");
+        munmap(map_start, st.st_size);
+        close(fd);
+        return 1;
+    }
 
+    for (int idx = 0; idx < ehdr->e_phnum; idx++) {
+        Elf32_Phdr *phdr = (Elf32_Phdr *)((char *)map_start + ehdr->e_phoff + (idx * ehdr->e_phentsize));
+        if (phdr->p_type == PT_INTERP || phdr->p_type == PT_DYNAMIC) {
+            fprintf(stderr, "Error: Dynamic binaries are unsupported.\n");
+            munmap(map_start, st.st_size);
+            close(fd);
+            return 1;
+        }
+    }
+
+    printf("Type Offset VirtAddr PhysAddr FileSiz MemSiz Flg Align\n");
+    foreach_phdr(map_start, readelf_l, 0);
+    printf("\n--- Loading Program Segments ---\n");
+
+    // Pass the active file descriptor (fd) context as the third argument 
+    foreach_phdr(map_start, (void (*)(Elf32_Phdr *, int))load_phdr, fd);
+
+
+    //task 2c
+    void (*entry_point)() = (void (*)())ehdr->e_entry;
+
+    startup(argc - 1, argv + 1, entry_point);
+
+    // Fallback cleanup if needed
     munmap(map_start, st.st_size);
     close(fd);
 
