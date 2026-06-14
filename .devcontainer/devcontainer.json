@@ -1,0 +1,5 @@
+{
+  "name": "ESPL Container BY Marae Bshoty",
+  "image": "ghcr.io/mr3ee/devcontainer:latest",
+  "remoteUser": "vscode"
+}
