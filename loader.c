@@ -19,6 +19,24 @@
 // } Elf32_Phdr;
 
 
+// typedef struct {
+//     unsigned char e_ident[EI_NIDENT]; // Magic number, class, data encoding- 0
+//     uint16_t      e_type;             // File type (relocatable, exec, shared)- 16
+//     uint16_t      e_machine;          // Architecture- 18
+//     uint32_t      e_version;          // ELF version- 20
+//     Elf32_Addr    e_entry;            // Entry point address- 24
+//     Elf32_Off     e_phoff;            // Program header table offset - 28
+//     Elf32_Off     e_shoff;            // Section header table offset - 32
+//     uint32_t      e_flags;            // Processor-specific flags - 36
+//     uint16_t      e_ehsize;           // ELF header size - 40
+//     uint16_t      e_phentsize;        // Program header table entry size - 42
+//     uint16_t      e_phnum;            // Number of program header entries - 44
+//     uint16_t      e_shentsize;        // Section header table entry size - 46
+//     uint16_t      e_shnum;            // Number of section header entries - 48
+//     uint16_t      e_shstrndx;         // Section header table string index - 50
+// } Elf32_Ehdr;
+
+
 extern int startup(int argc, char **argv, void (*start)());
 
 int i = 0;
@@ -57,6 +75,8 @@ char *flags_to_str(Elf32_Word f) {
     return str;
 }
 
+
+//helper for task 0
 void test_func(Elf32_Phdr *phdr, int index) {
     printf("Program header number %d at address %p\n", i, (void *)phdr);
     i++;
@@ -66,7 +86,7 @@ void readelf_l(Elf32_Phdr *phdr, int index) {
     int prot = elf_flag_to_mmap_prot(phdr->p_flags);
     int map_flags = (phdr->p_type == PT_LOAD) ? mflags : 0;
 
-    printf("%s 0x%06x 0x%08x 0x%08x "
+    printf("%s 0x%06x 0x%08x 0x%08x"
            " 0x%05x 0x%05x %s 0x%x prot=0x%x mflags=0x%x\n",
            phdr_type_to_str(phdr->p_type),
            phdr->p_offset,
@@ -81,15 +101,18 @@ void readelf_l(Elf32_Phdr *phdr, int index) {
 }
 
 int foreach_phdr(void *map_start, void (*func)(Elf32_Phdr *, int), int arg) {
-    Elf32_Ehdr *ehdr = (Elf32_Ehdr *)map_start;
+    unsigned char *base = (unsigned char *)map_start;
 
-    for (int idx = 0; idx < ehdr->e_phnum; idx++) {
-        Elf32_Phdr *phdr = (Elf32_Phdr *)((char *)map_start +
-                                          ehdr->e_phoff +
-                                          idx * ehdr->e_phentsize);
+    /* ELF32 little-endian layout offsets */
+    uint32_t e_phoff = *(uint32_t *)(base + 28);
+    uint16_t e_phentsize = *(uint16_t *)(base + 42);
+    uint16_t e_phnum = *(uint16_t *)(base + 44);
+
+    for (int idx = 0; idx < e_phnum; idx++) {
+        Elf32_Phdr *phdr = (Elf32_Phdr *)(base + e_phoff + idx * e_phentsize);
         func(phdr, arg);
     }
-    return ehdr->e_phnum;
+    return e_phnum;
 }
 
 //task 2b
@@ -187,7 +210,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    printf("Type Offset VirtAddr PhysAddr FileSiz MemSiz Flg Align\n");
+    printf("Type Offset   VirtAddr   PhysAddr   FileSiz MemSiz  Flg Align\n");
     foreach_phdr(map_start, readelf_l, 0);
     printf("\n--- Loading Program Segments ---\n");
 
